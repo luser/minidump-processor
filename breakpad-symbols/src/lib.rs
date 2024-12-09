@@ -216,6 +216,14 @@ pub struct FileLookup {
 /// [packagesymbols]: https://gist.github.com/luser/2ad32d290f224782fcfc#file-packagesymbols-py
 pub fn breakpad_sym_lookup(module: &(dyn Module + Sync)) -> Option<FileLookup> {
     let debug_file = module.debug_file()?;
+    let debug_file = if debug_file.is_empty() {
+        // If the debug_file info is empty, fallback to the code_file.
+        // This can be the case on Windows minidumps generated for gcc MingW-w64 builds
+        // as GCC does not support PDB generation there.
+        module.code_file()
+    } else {
+        debug_file
+    };
     let debug_id = module.debug_identifier()?;
 
     let leaf = leafname(&debug_file);
@@ -476,6 +484,7 @@ impl SymbolSupplier for SimpleSymbolSupplier {
         trace!("SimpleSymbolSupplier search");
         if let Some(lookup) = lookup(module, file_kind) {
             for path in self.paths.iter() {
+                trace!("SimpleSymbolSupplier looking for {}", path.display());
                 if path.is_file() && file_kind == FileKind::BreakpadSym {
                     if let Ok(sf) = SymbolFile::from_file(path) {
                         if sf.module_id == lookup.debug_id {
@@ -485,6 +494,10 @@ impl SymbolSupplier for SimpleSymbolSupplier {
                     }
                 } else if path.is_dir() {
                     let test_path = path.join(lookup.cache_rel.clone());
+                    trace!(
+                        "SimpleSymbolSupplier looking for file {}",
+                        test_path.display()
+                    );
                     if fs::metadata(&test_path).ok().map_or(false, |m| m.is_file()) {
                         trace!("SimpleSymbolSupplier found file {}", test_path.display());
                         return Ok(test_path);
